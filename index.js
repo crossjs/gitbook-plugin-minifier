@@ -1,45 +1,72 @@
 "use strict";
 
-var fs = require('fs'),
+var fs = require("fs"),
   path = require("path"),
-  htmlMinifier = require('html-minifier').minify;
+  htmlMinifier = require("html-minifier").minify,
+  CleanCSS = require("clean-css"),
+  UglifyJS = require("uglify-js");
 
-var dirFilesHtmlMinify = function (dirPath, book) {
-  fs.readdir(dirPath, function (err, files) {
-    if (err) throw err;
-    files.map(function (fileName) {
+var dirFilesMinify = function(dirPath, book) {
+  var config = book.config.get("pluginsConfig")["minifier"];
 
-      // fileName to filePath
-      return path.join(dirPath, fileName);
+  var htmlConfig = Object.assign(
+    {
+      collapseWhitespace: true,
+      minifyCSS: true,
+      minifyCSS: true,
+      removeComments: true
+    },
+    config.html
+  );
+  var cssMinifier = new CleanCSS(
+    Object.assign({ returnPromise: false }, config.css)
+  );
 
-    }).forEach(function (filePath) {
-      if (fs.statSync(filePath).isFile() && filePath.match(/\.html$/) !== null) {
-        // read html
-        var html = fs.readFileSync(filePath, 'utf8');
+  function doFilesMinify(filePath) {
+    // read
+    var input = fs.readFileSync(filePath, "utf8");
 
-        // html minify
-        var minifiedHtml = htmlMinifier(html, book.config.get('pluginsConfig')['html-minifier']);
-
-        // overwrite minified html
-        fs.writeFileSync(filePath, minifiedHtml);
-
-        book.log.info.ln('html-minifier "' + filePath + '"');
-      } else if (fs.statSync(filePath).isDirectory()) {
-
-        // recursive
-        dirFilesHtmlMinify(filePath, book);
+    // minify
+    var compressed = (function() {
+      if (filePath.match(/\.html$/) !== null) {
+        return htmlMinifier(input, htmlConfig);
+      } else if (filePath.match(/\.css$/) !== null) {
+        return cssMinifier.minify(input).styles;
+      } else if (filePath.match(/\.js$/) !== null) {
+        return UglifyJS.minify(input, config.js).code;
       }
-    });
+    })();
+
+    // overwrite minified
+    fs.writeFileSync(filePath, compressed);
+
+    book.log.info.ln('minifier "' + filePath + '"');
+  }
+
+  fs.readdir(dirPath, function(err, files) {
+    if (err) throw err;
+    files
+      .map(function(fileName) {
+        // fileName to filePath
+        return path.join(dirPath, fileName);
+      })
+      .forEach(function(filePath) {
+        if (fs.statSync(filePath).isDirectory()) {
+          // recursive
+          dirFilesMinify(filePath, book);
+        } else if (fs.statSync(filePath).isFile()) {
+          if (filePath.match(/\.(html|css|js)$/) !== null) {
+            doFilesMinify(filePath);
+          }
+        }
+      });
   });
-}
+};
 
 module.exports = {
   hooks: {
-    "finish": function () {
-      dirFilesHtmlMinify(
-        this.output.root(),
-        this
-      );
+    finish: function() {
+      dirFilesMinify(this.output.root(), this);
     }
   }
 };
